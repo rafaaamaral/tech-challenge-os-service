@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TechChallenge.OS.Application.DTOs;
@@ -19,6 +20,7 @@ namespace TechChallenge.OS.Api.Controllers;
 [ApiController]
 [Route("api/v1/ordens-servico")]
 [Produces("application/json")]
+[Authorize]
 public class OrdemServicoController : ControllerBase
 {
     private readonly IOrdemServicoApplicationService _applicationService;
