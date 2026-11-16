@@ -1,0 +1,26 @@
+services:
+  postgres-os-test:
+    image: postgres:16
+    container_name: tc-os-postgres-test
+    environment:
+      POSTGRES_DB: techchallenge_os_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - tc_os_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d techchallenge_os_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    networks:
+      - tc_os_network
+
+volumes:
+  tc_os_test_data:
+
+networks:
+  tc_os_network:
+    driver: bridge
