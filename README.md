@@ -1,5 +1,24 @@
 # TechChallenge.OS
 
+## CI/CD em `feat/developtment`
+
+A [esteira do OS Service](.github/workflows/os-ci-cd.yml) executa restore, build Release e testes unitários e de integração em pushes e pull requests para `feat/developtment`. Os relatórios TRX e Cobertura XML ficam em **Actions → execução → Artifacts**. O build mantém o aviso de documentação XML `CS1591` como aviso e trata os demais avisos como erros.
+
+Após a aprovação dos testes em um push na branch, a esteira publica a API, aplica as migrations em PostgreSQL efêmero e verifica `/health` e o consumidor no RabbitMQ. A entrega é o pacote `os-service-feat-developtment.tar.gz` com migrations idempotentes e checksum SHA256.
+
+A [estória e o procedimento de implantação](.specs/features/ci-cd/spec.md) descrevem o download, a configuração do ambiente, a instalação, a verificação e o rollback. Quando o workflow estiver presente na branch padrão do repositório, também será possível iniciá-lo manualmente pela aba Actions selecionando `feat/developtment`. [Execução manual no GitHub Actions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
+## SonarQube
+
+O job **SonarQube** analisa o código C# com o SonarScanner for .NET, importa a cobertura OpenCover dos testes da esteira e aguarda o Quality Gate. Ele roda em pushes para `feat/developtment` e em pull requests do próprio repositório para essa branch.
+
+1. Crie ou importe o projeto no SonarQube. No Cloud, selecione análise via GitHub Actions e desative a análise automática se ela estiver ativa.
+2. Em **Settings → Secrets and variables → Actions** no GitHub, cadastre o secret `SONAR_TOKEN` com permissão **Execute Analysis** para o projeto.
+3. Em **Variables**, cadastre `SONAR_ORGANIZATION` para SonarQube Cloud, ou `SONAR_HOST_URL` para um SonarQube Server acessível pelo runner. Para uma organização Cloud na região dos EUA, defina também `SONAR_REGION=us`.
+4. Cadastre a variável `SONAR_PROJECT_KEY` por último para ativar o job. Consulte o resultado do Quality Gate e o link da análise no log do job.
+
+Para analisar branches de desenvolvimento e seus pull requests, use um plano Cloud com esse suporte (OSS, Team ou Enterprise) ou SonarQube Server Developer Edition ou superior. Em um projeto Cloud novo, faça a análise inicial da branch principal antes de analisar a branch de desenvolvimento. [Planos e suporte a branches](https://docs.sonarsource.com/sonarqube-cloud/administering-sonarcloud/managing-subscription/subscription-plans) · [Primeira análise no Cloud](https://docs.sonarsource.com/sonarqube-cloud/getting-started/first-analysis)
+
 ## Mensageria (RabbitMQ) - Saga coreografada
 
 Exchange `topic` durável: `techchallenge.events`. Todos os eventos (JSON camelCase) têm `eventId` (Guid), `ordemServicoUniqueCode` (Guid) e `occurredAt` (UTC); `motivo` é opcional.

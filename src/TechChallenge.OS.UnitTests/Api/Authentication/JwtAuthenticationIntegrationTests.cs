@@ -30,7 +30,9 @@ public class JwtAuthenticationIntegrationTests : IClassFixture<WebApplicationFac
                     ["Jwt:Issuer"] = Issuer,
                     ["Jwt:Audience"] = Audience,
                     ["Jwt:SigningKey"] = SigningKey,
-                    ["ConnectionStrings:OSDb"] = "Host=localhost;Port=5433;Database=techchallenge_os_test;Username=postgres;Password=postgres"
+                    ["ConnectionStrings:OSDb"] = Environment.GetEnvironmentVariable("OSDB_INTEGRATION_TEST_CONNECTION")
+                        ?? "Host=localhost;Port=5433;Database=techchallenge_os_test;Username=postgres;Password=postgres",
+                    ["RABBITMQ_ENABLED"] = "false"
                 });
             });
 
@@ -110,6 +112,25 @@ public class JwtAuthenticationIntegrationTests : IClassFixture<WebApplicationFac
         var response = await client.GetAsync("/health");
 
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HealthEndpoint_PostgreSqlIndisponivel_DeveRetornar503()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:OSDb"] = "Host=127.0.0.1;Port=1;Database=os;Username=os;Password=os;Timeout=2"
+                })));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost")
+        });
+
+        var response = await client.GetAsync("/health");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
     [Fact]
