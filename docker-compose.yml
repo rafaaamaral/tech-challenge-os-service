@@ -7,6 +7,8 @@ services:
     ports:
       - "8081:8080"
     environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      Authentication__BypassEnabled: "true"    
       # Banco PostgreSQL
       OSDB_CONNECTION_STRING: "Host=postgres-os;Port=5432;Database=techchallenge_os;Username=postgres;Password=postgres"
       ConnectionStrings__OSDb: "Host=postgres-os;Port=5432;Database=techchallenge_os;Username=postgres;Password=postgres"
