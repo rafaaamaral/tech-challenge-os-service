@@ -1,0 +1,241 @@
+name: OS Service - CI/CD (feat/developtment)
+
+on:
+  push:
+    branches: [feat/developtment]
+  pull_request:
+    branches: [feat/developtment]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  BUILD_CONFIGURATION: Release
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  API_PROJECT: src/TechChallenge.OS.Api/TechChallenge.OS.Api.csproj
+  TEST_PROJECT: src/TechChallenge.OS.UnitTests/TechChallenge.OS.UnitTests.csproj
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: 01 - Restore e build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Obter código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restaurar dependências
+        run: dotnet restore TechChallenge.OS.slnx
+
+      - name: Compilar solução em Release
+        run: dotnet build TechChallenge.OS.slnx -c "$BUILD_CONFIGURATION" --no-restore --warnaserror -warnNotAsError:CS1591
+
+  tests:
+    name: 02 - ${{ matrix.name }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: unit
+            name: Testes unitários
+            filter: FullyQualifiedName!~.Integration.&FullyQualifiedName!~.Api.Authentication.
+            postgres_image: ''
+          - suite: integration
+            name: Testes de integração HTTP/JWT e PostgreSQL
+            filter: FullyQualifiedName~.Integration.|FullyQualifiedName~.Api.Authentication.
+            postgres_image: postgres:16
+    env:
+      TEST_FILTER: ${{ matrix.filter }}
+      TEST_SUITE: ${{ matrix.suite }}
+      RUN_POSTGRES_INTEGRATION_TESTS: ${{ matrix.suite == 'integration' && 'true' || 'false' }}
+      OSDB_INTEGRATION_TEST_CONNECTION: Host=127.0.0.1;Port=5433;Database=techchallenge_os_test;Username=postgres;Password=postgres
+    services:
+      postgres:
+        image: ${{ matrix.postgres_image }}
+        env:
+          POSTGRES_DB: techchallenge_os_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d techchallenge_os_test"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - name: Obter código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Executar suíte e coletar cobertura
+        run: >-
+          dotnet test "$TEST_PROJECT" -c "$BUILD_CONFIGURATION"
+          --filter "$TEST_FILTER"
+          --logger "trx;LogFileName=$TEST_SUITE.trx"
+          --results-directory "artifacts/test-results/$TEST_SUITE"
+          --collect "XPlat Code Coverage" --settings tests/coverage.runsettings
+
+      - name: Validar execução dos testes e gerar resumo
+        if: always()
+        shell: pwsh
+        run: ./scripts/Write-TestSummary.ps1 -ResultsDirectory "artifacts/test-results/$env:TEST_SUITE" -Suite $env:TEST_SUITE
+
+      - name: Disponibilizar relatórios TRX e cobertura
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ matrix.suite }}
+          path: artifacts/test-results/${{ matrix.suite }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  package:
+    name: 03 - Publicar e validar artefato de entrega
+    needs: [build, tests]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/developtment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5080
+      ConnectionStrings__OSDb: Host=127.0.0.1;Port=5432;Database=techchallenge_os_smoke;Username=postgres;Password=postgres
+      Jwt__Issuer: os-ci-smoke
+      Jwt__Audience: os-ci-smoke
+      Jwt__SigningKey: os-ci-smoke-local-signing-key-with-32-bytes
+      RABBITMQ_ENABLED: 'true'
+      RABBITMQ_HOST: '127.0.0.1'
+      RABBITMQ_USER: os-ci
+      RABBITMQ_PASSWORD: os-ci-local
+      RABBITMQ_QUEUE: os-service.events
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: techchallenge_os_smoke
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d techchallenge_os_smoke"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 15
+      rabbitmq:
+        image: rabbitmq:4.2.9-management
+        env:
+          RABBITMQ_DEFAULT_USER: os-ci
+          RABBITMQ_DEFAULT_PASS: os-ci-local
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 15s
+    steps:
+      - name: Obter código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publicar aplicação em Release
+        run: >-
+          dotnet publish "$API_PROJECT" -c "$BUILD_CONFIGURATION"
+          --self-contained false -p:UseAppHost=false --output artifacts/publish
+
+      - name: Gerar e aplicar migrations no PostgreSQL efêmero
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          dotnet tool install dotnet-ef --version 10.0.14 --tool-path "$RUNNER_TEMP/os-tools"
+          "$RUNNER_TEMP/os-tools/dotnet-ef" migrations script --idempotent --no-build \
+            --configuration "$BUILD_CONFIGURATION" --project src/TechChallenge.OS.Infrastructure \
+            --startup-project "$API_PROJECT" --output artifacts/publish/migrations.sql
+          docker exec -i "$POSTGRES_CONTAINER_ID" psql -X -v ON_ERROR_STOP=1 \
+            -U postgres -d techchallenge_os_smoke < artifacts/publish/migrations.sql
+
+      - name: Validar health e consumo no RabbitMQ da aplicação publicada
+        env:
+          RABBITMQ_CONTAINER_ID: ${{ job.services.rabbitmq.id }}
+        run: |
+          dotnet artifacts/publish/TechChallenge.OS.Api.dll > artifacts/smoke.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:5080/health > artifacts/health.txt &&
+              grep -qx Healthy artifacts/health.txt &&
+              docker exec "$RABBITMQ_CONTAINER_ID" rabbitmqctl -q list_queues --no-table-headers name consumers > artifacts/rabbitmq-queues.txt &&
+              awk -v queue="$RABBITMQ_QUEUE" '$1 == queue && $2 > 0 { found = 1 } END { exit !found }' artifacts/rabbitmq-queues.txt; then
+              echo 'Aplicação publicada respondeu Healthy e registrou o consumidor no RabbitMQ.' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          cat artifacts/smoke.log
+          exit 1
+
+      - name: Empacotar aplicação e gerar checksum SHA256
+        working-directory: artifacts
+        run: |
+          tar -czf os-service-feat-developtment.tar.gz -C publish .
+          sha256sum os-service-feat-developtment.tar.gz > os-service-feat-developtment.tar.gz.sha256
+
+      - name: Disponibilizar pacote de entrega
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: os-service-feat-developtment-${{ github.sha }}
+          path: |
+            artifacts/os-service-feat-developtment.tar.gz
+            artifacts/os-service-feat-developtment.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Disponibilizar diagnóstico da inicialização
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: os-service-smoke
+          path: |
+            artifacts/smoke.log
+            artifacts/health.txt
+            artifacts/rabbitmq-queues.txt
+          if-no-files-found: warn
+          retention-days: 14

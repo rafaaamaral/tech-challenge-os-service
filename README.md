@@ -1,5 +1,13 @@
 # TechChallenge.OS
 
+## CI/CD em `feat/developtment`
+
+A [esteira do OS Service](.github/workflows/os-ci-cd.yml) executa restore, build Release e testes unitários e de integração em pushes e pull requests para `feat/developtment`. Os relatórios TRX e Cobertura XML ficam em **Actions → execução → Artifacts**. O build mantém o aviso de documentação XML `CS1591` como aviso e trata os demais avisos como erros.
+
+Após a aprovação dos testes em um push na branch, a esteira publica a API, aplica as migrations em PostgreSQL efêmero e verifica `/health` e o consumidor no RabbitMQ. A entrega é o pacote `os-service-feat-developtment.tar.gz` com migrations idempotentes e checksum SHA256.
+
+A [estória e o procedimento de implantação](.specs/features/ci-cd/spec.md) descrevem o download, a configuração do ambiente, a instalação, a verificação e o rollback. Quando o workflow estiver presente na branch padrão do repositório, também será possível iniciá-lo manualmente pela aba Actions selecionando `feat/developtment`. [Execução manual no GitHub Actions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
 ## Mensageria (RabbitMQ) - Saga coreografada
 
 Exchange `topic` durável: `techchallenge.events`. Todos os eventos (JSON camelCase) têm `eventId` (Guid), `ordemServicoUniqueCode` (Guid) e `occurredAt` (UTC); `motivo` é opcional.
