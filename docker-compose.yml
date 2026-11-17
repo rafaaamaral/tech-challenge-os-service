@@ -1,0 +1,64 @@
+
+services:
+  os-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    environment:
+      # Banco PostgreSQL
+      OSDB_CONNECTION_STRING: "Host=postgres-os;Port=5432;Database=techchallenge_os;Username=postgres;Password=postgres"
+      ConnectionStrings__OSDb: "Host=postgres-os;Port=5432;Database=techchallenge_os;Username=postgres;Password=postgres"
+      # JWT
+      Jwt__Issuer: "changeme"
+      Jwt__Audience: "changeme"
+      Jwt__SigningKey: "changeme-changeme-changeme-changeme"
+
+      # RabbitMQ compartilhado com Execution
+      RABBITMQ_ENABLED: "true"
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: "guest"
+      RABBITMQ_PASSWORD: "guest"
+      RABBITMQ_VHOST: "/"
+      RABBITMQ_QUEUE: "os-service.events"
+
+    depends_on:
+      postgres-os:
+        condition: service_healthy
+
+    networks:
+      - default
+      - execution_network
+
+  postgres-os:
+    ports:
+      - "5433:5432"
+    image: postgres:16
+    environment:
+      POSTGRES_DB: "techchallenge_os"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d techchallenge_os
+      interval: 3s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - postgres_os_data:/var/lib/postgresql/data
+    networks:
+      - default
+
+networks:
+  default:
+    name: tech-challenge-os-service_tc_os_network
+
+  execution_network:
+    external: true
+    name: tech-challenge-execution-service_default
+
+volumes:
+  postgres_os_data:
