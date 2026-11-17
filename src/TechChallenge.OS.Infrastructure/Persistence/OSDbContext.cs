@@ -16,8 +16,10 @@ public class OSDbContext : DbContext
     public DbSet<OrdemServicoItemServico> OrdemServicoItensServicos => Set<OrdemServicoItemServico>();
     public DbSet<OrdemServicoItemPecaInsumo> OrdemServicoItensPecasInsumos => Set<OrdemServicoItemPecaInsumo>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
+    public DbSet<ProcessedEvent> ProcessedEvents => Set<ProcessedEvent>();
+    public DbSet<OrdemServicoCompensacao> Compensacoes => Set<OrdemServicoCompensacao>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)    {
         base.OnModelCreating(modelBuilder);
 
         modelBuilder.HasSequence<int>(OrdemServicoNumeroSequenceName)
@@ -27,5 +29,7 @@ public class OSDbContext : DbContext
         modelBuilder.ApplyConfiguration(new OrdemServicoConfiguration());
         modelBuilder.ApplyConfiguration(new OrdemServicoItemServicoConfiguration());
         modelBuilder.ApplyConfiguration(new OrdemServicoItemPecaInsumoConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcessedEventConfiguration());
+        modelBuilder.ApplyConfiguration(new OrdemServicoCompensacaoConfiguration());
     }
 }

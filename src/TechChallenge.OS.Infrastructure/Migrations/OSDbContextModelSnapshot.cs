@@ -199,6 +199,79 @@ namespace TechChallenge.OS.Infrastructure.Migrations
                     b.ToTable("ordem_servico_item_servico", (string)null);
                 });
 
+            modelBuilder.Entity("TechChallenge.OS.Infrastructure.Persistence.OrdemServicoCompensacao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CriadoEm")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("criado_em");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("Motivo")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("motivo");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid>("OrdemServicoUniqueCode")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ordem_servico_unique_code");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrdemServicoUniqueCode")
+                        .IsUnique();
+
+                    b.ToTable("ordem_servico_compensacao", (string)null);
+                });
+
+            modelBuilder.Entity("TechChallenge.OS.Infrastructure.Persistence.ProcessedEvent", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<Guid>("OrdemServicoUniqueCode")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ordem_servico_unique_code");
+
+                    b.Property<DateTime>("ProcessadoEm")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processado_em");
+
+                    b.Property<string>("Resultado")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("resultado");
+
+                    b.Property<string>("RoutingKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("routing_key");
+
+                    b.HasKey("EventId");
+
+                    b.ToTable("processed_event", (string)null);
+                });
+
             modelBuilder.Entity("TechChallenge.OS.Domain.Aggregates.OrdemServicos.OrdemServicoItemPecaInsumo", b =>
                 {
                     b.HasOne("TechChallenge.OS.Domain.Aggregates.OrdemServicos.OrdemServico", null)

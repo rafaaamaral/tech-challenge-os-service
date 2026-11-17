@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using TechChallenge.OS.Infrastructure.Messaging;
 using TechChallenge.OS.Application.Interfaces.Repositories;
 using TechChallenge.OS.Application.Interfaces.Services;
 using TechChallenge.OS.Application.Services.OrdemServicos;
@@ -27,7 +29,24 @@ public static class DependencyInjection
         services.AddScoped<IOrdemServicoRepository, OrdemServicoRepository>();
 
         // Application Services
-        services.AddScoped<IOrdemServicoApplicationService, OrdemServicoApplicationService>();
+        services.AddScoped<IOrdemServicoApplicationService>(sp =>
+            new PublishingOrdemServicoApplicationService(
+                ActivatorUtilities.CreateInstance<OrdemServicoApplicationService>(sp),
+                sp.GetRequiredService<IOrdemServicoEventPublisher>(),
+                sp.GetRequiredService<ILogger<PublishingOrdemServicoApplicationService>>()));
+
+        var rabbit = RabbitMqOptions.FromConfiguration(configuration);
+        services.AddSingleton(rabbit);
+        if (rabbit.Enabled)
+        {
+            services.AddSingleton<IOrdemServicoEventPublisher, RabbitMqEventPublisher>();
+            services.AddScoped<IIntegrationEventHandler, IntegrationEventHandler>();
+            services.AddHostedService<RabbitMqConsumerService>();
+        }
+        else
+        {
+            services.AddSingleton<IOrdemServicoEventPublisher, NullOrdemServicoEventPublisher>();
+        }
 
         // Hexagonal Ports (External Services) - Implementações de Stub
         // Essas interfaces serão substituídas pelas implementações reais quando os serviços correspondentes estiverem disponíveis
