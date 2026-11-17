@@ -21,9 +21,10 @@ public class DatabaseHealthCheck : IHealthCheck
     {
         try
         {
-            // Simples verificação de conectividade com uma query
-            await _dbContext.Database.CanConnectAsync(cancellationToken);
-            return HealthCheckResult.Healthy("PostgreSQL conectado e respondendo");
+            var canConnect = await _dbContext.Database.CanConnectAsync(cancellationToken);
+            return canConnect
+                ? HealthCheckResult.Healthy("PostgreSQL conectado e respondendo")
+                : HealthCheckResult.Unhealthy("Falha na conexão com PostgreSQL");
         }
         catch (Exception ex)
         {

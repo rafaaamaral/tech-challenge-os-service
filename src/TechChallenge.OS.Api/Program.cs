@@ -46,7 +46,21 @@ builder.Services
         };
     });
 
-builder.Services.AddAuthorization();
+var bypassEnabled =
+    builder.Environment.IsDevelopment() &&
+    builder.Configuration.GetValue<bool>("Authentication:BypassEnabled");
+
+if (bypassEnabled)
+{
+    builder.Services.PostConfigure<Microsoft.AspNetCore.Authorization.AuthorizationOptions>(
+        options =>
+        {
+            options.DefaultPolicy =
+                new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                    .RequireAssertion(_ => true)
+                    .Build();
+        });
+}
 
 builder.Services.AddSwaggerGen(options =>
 {
