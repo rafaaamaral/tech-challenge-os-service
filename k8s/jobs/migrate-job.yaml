@@ -1,0 +1,63 @@
+# Job MANUAL de migrations (não é aplicado pelo workflow).
+# A aplicação NÃO executa migrations no startup e a imagem de runtime não contém o dotnet-ef,
+# por isso o Job aplica o script SQL idempotente gerado pelo EF Core (mesmo script do CI):
+#   dotnet ef migrations script --idempotent -p src/TechChallenge.OS.Infrastructure -s src/TechChallenge.OS.Api -o migrations.sql
+#   kubectl create configmap os-migrations-sql -n tech-challenge --from-file=migrations.sql
+#   kubectl apply -f k8s/jobs/migrate-job.yaml
+# Usa o Secret "os-postgres-secret" (POSTGRES_DB/USER/PASSWORD) e o Service "postgres-os".
+# Se o banco for outro, ajuste PGHOST e o Secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: os-service-migrate
+  namespace: tech-challenge
+  labels:
+    app.kubernetes.io/name: os-service-migrate
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: os-service-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: postgres:16
+          command:
+            - sh
+            - -c
+            - psql -X -v ON_ERROR_STOP=1 -f /migrations/migrations.sql
+          env:
+            - name: PGHOST
+              value: postgres-os
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: os-postgres-secret
+                  key: POSTGRES_DB
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: os-postgres-secret
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: os-postgres-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      volumes:
+        - name: migrations
+          configMap:
+            name: os-migrations-sql

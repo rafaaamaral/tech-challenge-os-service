@@ -431,30 +431,140 @@ Lacunas conhecidas: não há teste ponta a ponta com RabbitMQ real nem testes do
 
 ## 18. CI/CD com GitHub Actions
 
-Workflow: [.github/workflows/os-ci-cd.yml](.github/workflows/os-ci-cd.yml) — dispara em *push* e *pull request* para a branch **`feat/developtment`** e em `workflow_dispatch`. (Não há gatilho para `main`/`master`.)
+Workflow: [.github/workflows/os-ci-cd.yml](.github/workflows/os-ci-cd.yml) — gatilhos:
+
+- **Pull request para `main`**: build, testes e SonarCloud (sem publicação nem deploy).
+- **Push na `main`**: build, testes, SonarCloud, pacote, imagem GHCR e deploy.
+- `workflow_dispatch`: executa os jobs de validação; `package`, `docker` e `deploy` só rodam em *push* na `main`.
+- Nenhuma outra branch dispara o pipeline nem o deploy.
+
+```mermaid
+flowchart LR
+  B[01 build] --> T[02 tests: unit + integration]
+  T --> S[03 sonar + Quality Gate]
+  S --> P[04 package]
+  P --> D[05 docker build/push GHCR]
+  D --> K[06 deploy Kubernetes]
+```
 
 | Job | O que faz |
 |---|---|
-| `01 - Restore e build` | `dotnet restore` e `dotnet build` em Release com `--warnaserror` (exceto CS1591). |
-| `02 - Testes` (matriz) | Suíte **unitária** e suíte de **integração HTTP/JWT + PostgreSQL 16**; coleta cobertura; `Write-TestSummary.ps1` valida/resume; publica TRX e cobertura (14 dias). |
-| `SonarQube` | Condicional (ver seção 19). |
-| `03 - Publicar e validar artefato` | Somente em *push* na `feat/developtment`: `dotnet publish`, gera e aplica migrations idempotentes em PostgreSQL efêmero, sobe a API publicada com PostgreSQL e RabbitMQ efêmeros, valida `/health` = `Healthy` e a presença do consumidor na fila `os-service.events`, e publica `os-service-feat-developtment.tar.gz` + SHA256 (30 dias). |
+| `01 - build` | `dotnet restore` e `dotnet build` em Release com `--warnaserror` (exceto CS1591). |
+| `02 - tests` (matriz) | Suíte **unitária** e suíte de **integração HTTP/JWT + PostgreSQL 16**; coleta cobertura; `Write-TestSummary.ps1` valida/resume; publica TRX e cobertura (14 dias). |
+| `03 - sonar` | SonarScanner (begin → build → testes com OpenCover → end) e espera do Quality Gate. Falha explicitamente se faltar configuração (seção 19). Não roda em PR de fork/dependabot. |
+| `04 - package` | Somente push na `main`: `dotnet publish`, migrations idempotentes em PostgreSQL efêmero, smoke test com RabbitMQ efêmero (`/health` e consumidor da fila) e artefato `os-service-main.tar.gz` + SHA256 (30 dias). |
+| `05 - docker` | Somente push na `main`: build e push de `ghcr.io/<owner>/<repo>:<commit-sha>` (minúsculas, tag imutável, sem `latest`) com `GITHUB_TOKEN` (permissões `contents: read`, `packages: write`). |
+| `06 - deploy` | Somente `github.event_name == 'push' && github.ref == 'refs/heads/main'`: aplica manifests, troca a imagem pelo SHA publicado, `kubectl rollout status` (timeout 300 s, falha se não ficar disponível) e imprime diagnóstico. |
 
-**Escopo real:** o pipeline realiza **CI e empacotamento**. **Não há** build/push de imagem Docker, nem deploy automático em Kubernetes ou em outro ambiente; a entrega é um pacote para implantação manual (procedimento e rollback em [.specs/features/ci-cd/spec.md](.specs/features/ci-cd/spec.md)). Resultados de execuções devem ser consultados na aba **Actions**; este README não afirma o status atual.
+Os jobs seguintes usam `needs` nos anteriores; sem `continue-on-error` em testes ou Sonar, portanto falha de validação impede imagem e deploy.
+
+### Configuração no GitHub (Settings → Secrets and variables → Actions)
+
+| Tipo | Nome | Obrigatório | Uso |
+|---|---|---|---|
+| Secret | `SONAR_TOKEN` | Sim | Token do SonarCloud. |
+| Variable | `SONAR_PROJECT_KEY` | Sim | Chave do projeto no Sonar. |
+| Variable | `SONAR_ORGANIZATION` | Sim | Organização no SonarCloud. |
+| Variable | `SONAR_REGION` | Não | `us` se a organização estiver na região US. |
+
+`GITHUB_TOKEN` é automático. Nenhum kubeconfig, token ou senha é versionado.
+
+### Publicação da imagem
+
+A imagem é publicada automaticamente pelo job `05 - docker` a cada push na `main`. Manualmente (token com `write:packages`):
+
+```powershell
+$img = "ghcr.io/<owner>/<repo>:<sha>"
+$env:GHCR_PAT | docker login ghcr.io -u <usuario> --password-stdin
+docker build -t $img .
+docker push $img
+```
+
+Resultados de execuções devem ser consultados na aba **Actions**; este README não afirma o status atual.
 
 ## 19. Análise de qualidade (SonarQube/SonarCloud)
 
-O job **SonarQube** está configurado no workflow, mas é **opcional/condicional**: só executa se a variável de repositório `SONAR_PROJECT_KEY` estiver definida (além de não ser *dependabot* nem PR de fork). Requer:
+O job `03 - sonar` é **obrigatório** no pipeline (PR para `main` e push na `main`) e **não** é executado em PRs de forks nem por *dependabot* (secrets indisponíveis). Ele valida primeiro a configuração e falha com `::error::` se faltar:
 
 1. Secret `SONAR_TOKEN`.
-2. Variável `SONAR_ORGANIZATION` (SonarQube Cloud; opcionalmente `SONAR_REGION=us`) **ou** `SONAR_HOST_URL` (Server).
-3. Variável `SONAR_PROJECT_KEY` (por último, pois ela ativa o job).
+2. Variável `SONAR_PROJECT_KEY`.
+3. Variável `SONAR_ORGANIZATION` (opcionalmente `SONAR_REGION=us`).
 
-O job usa o SonarScanner for .NET 12.1.0, importa a cobertura OpenCover e os TRX gerados pelos testes e **aguarda o Quality Gate** (`sonar.qualitygate.wait=true`). Se a configuração está efetivamente feita no repositório e qual o resultado do Quality Gate **não é verificável a partir do código**; consulte o job no Actions e o dashboard do Sonar. Análise de branches e PRs depende do plano do Sonar ([planos](https://docs.sonarsource.com/sonarqube-cloud/administering-sonarcloud/managing-subscription/subscription-plans)).
+Como verificar: aba **Actions** → job `03 - sonar` (o Quality Gate é aguardado e reprova o job) e o dashboard do projeto em sonarcloud.io. Nenhum percentual de cobertura ou resultado de Quality Gate é declarado neste README. O job usa o SonarScanner for .NET 12.1.0, importa a cobertura OpenCover e os TRX gerados pelos testes e **aguarda o Quality Gate** (`sonar.qualitygate.wait=true`). Se a configuração está efetivamente feita no repositório e qual o resultado do Quality Gate **não é verificável a partir do código**; consulte o job no Actions e o dashboard do Sonar. Análise de branches e PRs depende do plano do Sonar ([planos](https://docs.sonarsource.com/sonarqube-cloud/administering-sonarcloud/managing-subscription/subscription-plans)).
 
 ## 20. Kubernetes
 
-**Não implementado neste repositório.** Não existem manifests (`k8s/`), Helm charts, nem etapa de deploy em cluster no workflow. Portanto este README **não** afirma suporte nem deploy funcional em Kubernetes. Ver pendências.
+Os manifests e a etapa de deploy estão **implementados**, mas **nenhum deploy foi executado/verificado** (não havia cluster acessível). Este README não afirma deploy funcional.
+
+### Estrutura
+
+```text
+k8s/
+├── namespace.yaml                 # namespace tech-challenge
+├── configmap.yaml                 # config não sensível (RabbitMQ host "rabbitmq", fila, ambiente Production)
+├── service.yaml                   # ClusterIP os-service:80 -> 8080
+├── deployment.yaml                # RollingUpdate, probes, resources; imagem = placeholder __OS_IMAGE__
+├── secret.example.yaml            # TEMPLATE (não aplicado pelo workflow)
+├── optional/
+│   ├── postgres-os.yaml           # PostgreSQL do OS (StatefulSet + Service postgres-os), opcional
+│   └── postgres-os-secret.example.yaml
+└── jobs/migrate-job.yaml          # Job manual que aplica migrations.sql
+```
+
+- **Probes:** readiness em `GET /health` (verifica PostgreSQL); liveness TCP na porta 8080 (uma queda do banco não reinicia o pod).
+- **Recursos:** requests 100m/192Mi, limits 500m/384Mi. Container não-root (uid 1654, validado com `docker run --user 1654`), sem capabilities.
+- **Autenticação:** ambiente `Production`; o bypass JWT **não** é habilitado.
+- **Dependências externas (não duplicadas aqui):** RabbitMQ deve existir como Service `rabbitmq` no namespace `tech-challenge` (ajuste `RABBITMQ_HOST` no ConfigMap se for outro). PostgreSQL: use o existente ou `k8s/optional/postgres-os.yaml`.
+
+### Preparar o cluster (uma vez)
+
+```powershell
+kubectl apply -f k8s/namespace.yaml
+
+# Secret da aplicação (valores reais NUNCA no Git)
+kubectl -n tech-challenge create secret generic os-service-secrets `
+  --from-literal=ConnectionStrings__OSDb="Host=postgres-os;Port=5432;Database=techchallenge_os;Username=<user>;Password=<senha>" `
+  --from-literal=Jwt__Issuer="<issuer>" --from-literal=Jwt__Audience="<audience>" `
+  --from-literal=Jwt__SigningKey="<chave-com-32+-caracteres>" `
+  --from-literal=RABBITMQ_USER="<user>" --from-literal=RABBITMQ_PASSWORD="<senha>"
+
+# Imagem privada no GHCR: PAT com read:packages (GITHUB_TOKEN expira e não serve para pull)
+kubectl -n tech-challenge create secret docker-registry ghcr-pull-secret `
+  --docker-server=ghcr.io --docker-username=<usuario> --docker-password=<PAT>
+```
+
+Alternativa: tornar o pacote GHCR público e remover `imagePullSecrets`.
+
+### Migrations
+
+A aplicação **não** executa migrations ao iniciar. Com o PostgreSQL opcional: crie `os-postgres-secret` (ver `*.example.yaml`), aplique `k8s/optional/postgres-os.yaml`, gere o script (`dotnet ef migrations script --idempotent`, o CI também gera `migrations.sql`), crie o ConfigMap e rode o Job:
+
+```powershell
+kubectl -n tech-challenge create configmap os-migrations-sql --from-file=migrations.sql=.\migrations.sql
+kubectl apply -f k8s/jobs/migrate-job.yaml
+kubectl -n tech-challenge logs job/os-service-migrate
+```
+
+### Deploy e validação
+
+O deploy é feito pelo job `06 - deploy` (apenas push na `main`). Manual:
+
+```powershell
+(Get-Content k8s\deployment.yaml -Raw) -replace '__OS_IMAGE__','ghcr.io/<owner>/<repo>:<sha>' | kubectl apply -f -
+kubectl -n tech-challenge rollout status deployment/os-service --timeout=300s
+kubectl -n tech-challenge get pods,svc
+kubectl -n tech-challenge logs deployment/os-service --tail=50
+kubectl -n tech-challenge port-forward svc/os-service 8080:80
+curl http://localhost:8080/health      # em outro terminal; Swagger em /swagger
+```
+
+### Limitações
+
+- Deploy **não executado**. O job `06 - deploy` roda no *self-hosted runner* Windows `GMODE-21` (`runs-on: [self-hosted, Windows, X64]`, PowerShell), usando o contexto `docker-desktop` do usuário que executa o runner (Kubernetes habilitado no Docker Desktop, `kubectl` no PATH). Não usa `KUBE_CONFIG`. Aplica apenas namespace, ConfigMap, Service e Deployment; Secrets e PostgreSQL/RabbitMQ não são criados pelo pipeline.
+- Imagem GHCR **pública**: `ghcr-pull-secret` não é necessário (a referência em `imagePullSecrets` é inofensiva se o Secret não existir; remova-a se preferir). Imagem **privada**: crie `ghcr-pull-secret` conforme acima.
+- O runner precisa estar online; sem ele o job de deploy fica na fila.
+- O job de deploy exige que o Secret `os-service-secrets` já exista e falha caso contrário.
+- RabbitMQ e (opcionalmente) PostgreSQL são dependências externas; sem Ingress, HPA ou NetworkPolicy.
 
 ## 21. Observabilidade e monitoramento
 
@@ -487,16 +597,16 @@ Não implementado: métricas (Prometheus/OpenTelemetry), tracing distribuído, c
 - Migrations não são aplicadas automaticamente; o compose depende de rede e RabbitMQ externos (repositório Execution) e roda com bypass de autenticação.
 - Swagger habilitado em todos os ambientes; `appsettings` com placeholders de JWT.
 - `UseHttpsRedirection` está ativo e o container expõe apenas HTTP (porta 8080).
-- Pipeline limitado à branch `feat/developtment`; sem imagem Docker publicada e sem deploy automatizado.
+- Deploy Kubernetes implementado, porém não verificado em cluster real; o job Sonar reexecuta os testes para que o scanner envolva build e testes.
 - Sem contrato formal (schema) versionado dos eventos compartilhado com Billing/Execution.
 
 ## Pendências em relação à Fase 4 (resumo)
 
-- [ ] Manifests Kubernetes e deploy automatizado (inexistentes) — e evidência de deploy funcional.
-- [ ] Build/publicação de imagem Docker no CI.
+- [x] Manifests Kubernetes, build/push GHCR e job de deploy (implementados; manifests validados por renderização local).
+- [ ] Evidência de deploy funcional (requer runner `GMODE-21` online, Kubernetes do Docker Desktop e Secrets no cluster).
 - [ ] Evidência da execução da Saga completa (OS + Billing + Execution) com RabbitMQ real.
 - [ ] Implementar a resolução da compensação (cancelamento da OS/evento de compensação).
 - [ ] Transactional Outbox para `os.criada`.
-- [ ] Confirmar a configuração do SonarQube/Cloud e registrar o resultado do Quality Gate e a cobertura.
+- [ ] Configurar secrets/variables do SonarCloud e registrar o resultado real do Quality Gate e a cobertura.
 - [ ] Observabilidade: métricas, tracing e alertas; health check incluindo RabbitMQ.
-- [ ] Gatilhos do CI para a branch principal e substituição dos stubs por integrações reais.
+- [ ] Substituição dos stubs por integrações reais.
