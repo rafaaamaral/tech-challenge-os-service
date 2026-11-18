@@ -1,13 +1,13 @@
 # Criar pipeline CI/CD do OS Service
 
-Como pessoa responsável pela entrega do OS Service, quero validar cada mudança na `feat/developtment` e gerar um pacote associado ao commit para implantar a versão aprovada com configuração e migrations reproduzíveis.
+Como pessoa responsável pela entrega do OS Service, quero validar cada mudança na `main` e gerar um pacote associado ao commit para implantar a versão aprovada com configuração e migrations reproduzíveis.
 
 ## Critérios de aceite
 
-- Pushes e pull requests direcionados à `feat/developtment` validam o build Release e executam as suítes unitária e de integração HTTP/JWT e PostgreSQL. A integração usa PostgreSQL 16 efêmero.
+- Pushes na `main` e pull requests direcionados à `main` validam o build Release e executam as suítes unitária e de integração HTTP/JWT e PostgreSQL. A integração usa PostgreSQL 16 efêmero.
 - Cada suíte disponibiliza TRX, cobertura Cobertura XML e resumo. Suítes vazias, com testes ignorados, com falhas ou sem cobertura válida bloqueiam o pacote de entrega.
-- Após a aprovação das suítes, um push na `feat/developtment` publica a API em Release. A mesma execução aplica as migrations em PostgreSQL efêmero, confirma `200 Healthy` em `/health` e verifica o consumidor na fila `os-service.events` de um RabbitMQ efêmero.
-- O artefato `os-service-feat-developtment-<SHA>` contém a API publicada, `migrations.sql` idempotente dentro do pacote e o checksum SHA256 ao lado do pacote. O artefato fica disponível por 30 dias. Pull requests publicam os relatórios das suítes.
+- Após a aprovação das suítes, um push na `main` publica a API em Release. A mesma execução aplica as migrations em PostgreSQL efêmero, confirma `200 Healthy` em `/health` e verifica o consumidor na fila `os-service.events` de um RabbitMQ efêmero.
+- O artefato `os-service-main-<SHA>` contém a API publicada, `migrations.sql` idempotente dentro do pacote e o checksum SHA256 ao lado do pacote. O artefato fica disponível por 30 dias. Pull requests publicam os relatórios das suítes.
 - O GitHub Actions entrega o pacote para implantação manual, como no Billing. As etapas abaixo cobrem a instalação e o retorno à versão anterior.
 
 ## Implantação do pacote em Linux
@@ -27,13 +27,13 @@ Como pessoa responsável pela entrega do OS Service, quero validar cada mudança
 
 ### Instalar e verificar
 
-1. Em **Actions → OS Service - CI/CD (feat/developtment) → execução bem-sucedida → Artifacts**, baixe `os-service-feat-developtment-<SHA>` e extraia o ZIP. Confira o SHA com o commit que pretende implantar.
+1. Em **Actions → OS Service - CI/CD → execução bem-sucedida → Artifacts**, baixe `os-service-main-<SHA>` e extraia o ZIP. Confira o SHA com o commit que pretende implantar.
 2. No diretório extraído, valide a integridade e descompacte a entrega em um diretório novo de release.
 
    ```bash
-   sha256sum --check os-service-feat-developtment.tar.gz.sha256 &&
+   sha256sum --check os-service-main.tar.gz.sha256 &&
      mkdir os-service-release &&
-     tar -xzf os-service-feat-developtment.tar.gz -C os-service-release
+     tar -xzf os-service-main.tar.gz -C os-service-release
    ```
 
 3. Revise `os-service-release/migrations.sql`, confirme o backup do banco e aplique as migrations com a identidade de implantação. O exemplo usa um serviço `os-migrations` previamente configurado no cliente PostgreSQL para o banco de destino. O script consulta o histórico do EF Core e aplica as migrations pendentes. [Documentação do EF Core sobre migrations idempotentes](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying#idempotent-sql-scripts).

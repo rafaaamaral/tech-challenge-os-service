@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: os-service-config
+  namespace: tech-challenge
+  labels:
+    app.kubernetes.io/name: os-service
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  ASPNETCORE_URLS: "http://+:8080"
+  # RabbitMQ compartilhado com Billing/Execution: Service "rabbitmq" no mesmo namespace.
+  # Para outro namespace, use rabbitmq.<namespace>.svc.cluster.local.
+  RABBITMQ_ENABLED: "true"
+  RABBITMQ_HOST: "rabbitmq"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_VHOST: "/"
+  RABBITMQ_QUEUE: "os-service.events"
